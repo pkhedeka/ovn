@@ -11354,6 +11354,30 @@ build_lswitch_ip_unicast_lookup(struct ovn_port *op,
         ovn_lflow_add(lflows, op->od, S_SWITCH_IN_L2_LKUP, 50, ds_cstr(match),
                       ds_cstr(actions), op->lflow_ref,
                       WITH_HINT(&op->nbsp->header_));
+
+        /* On switches with localnet ports (e.g., ext switches), prevent
+         * an L2 loop when traffic from the router is destined to the
+         * router's own MAC.  This occurs in cross-UDN scenarios where
+         * multiple routers share the same external MAC: the L2 lookup
+         * would send the packet back to the originating router port
+         * instead of forwarding it to the physical network via the
+         * localnet port. */
+        if (!vector_is_empty(&op->od->localnet_ports)) {
+            struct ovn_port *lp;
+            VECTOR_FOR_EACH (&op->od->localnet_ports, lp) {
+                ds_clear(match);
+                ds_put_format(match, "inport == %s && eth.dst == %s",
+                              op->json_key,
+                              op->peer->lrp_networks.ea_s);
+                ds_clear(actions);
+                ds_put_format(actions, "outport = %s; output;",
+                              lp->json_key);
+                ovn_lflow_add(lflows, op->od, S_SWITCH_IN_L2_LKUP, 55,
+                              ds_cstr(match), ds_cstr(actions),
+                              op->lflow_ref,
+                              WITH_HINT(&op->nbsp->header_));
+            }
+        }
     } else {
         ds_clear(actions);
         ds_put_format(actions, action, op->json_key);
